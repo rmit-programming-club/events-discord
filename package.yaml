@@ -35,6 +35,7 @@ dependencies:
 - gogol
 - resourcet
 - lens
+- time
 
 library:
   source-dirs: src

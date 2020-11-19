@@ -46,6 +46,7 @@ library
     , servant-client
     , servant-server
     , text
+    , time
   default-language: Haskell2010
 
 executable events-bot-exe
@@ -72,6 +73,7 @@ executable events-bot-exe
     , servant-client
     , servant-server
     , text
+    , time
   default-language: Haskell2010
 
 test-suite events-bot-test
@@ -99,4 +101,5 @@ test-suite events-bot-test
     , servant-client
     , servant-server
     , text
+    , time
   default-language: Haskell2010
