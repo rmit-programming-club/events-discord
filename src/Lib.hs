@@ -23,6 +23,7 @@ import           Control.Concurrent             ( forkIO )
 import           Control.Monad                  ( void
                                                 , when
                                                 , mapM
+                                                , forM
                                                 )
 import           System.Environment             ( lookupEnv )
 import qualified Control.Monad.Reader          as Reader
@@ -43,7 +44,11 @@ import           Network.HTTP.Client.TLS        ( tlsManagerSettings )
 import           System.IO                      ( stdout )
 import qualified Data.Maybe                    as Maybe
 import qualified Data.Time                     as Time
+import qualified Data.Time.Calendar            as Time
 import qualified Data.Time.Format              as Time
+import qualified Data.List                     as List
+import qualified Data.Time.RRule               as RRule
+import qualified Data.List.NonEmpty            as NonEmpty
 
 runBot :: IO ()
 runBot = do
@@ -67,7 +72,7 @@ eventHandler event =  Reader.ask >>= \_ ->
           "!help" -> do
             void $ D.restCall (R.CreateMessage (D.messageChannel m) helpMessage)
           "!events" -> do
-            events <- liftIO printNewEvents
+            events <- liftIO fetchNewEvents
             sendEmbed (D.messageChannel m) events
           _ -> pure ()
 
@@ -77,29 +82,33 @@ eventHandler event =  Reader.ask >>= \_ ->
   printMessage :: D.Message -> String
   printMessage message = T.unpack $ D.userName (D.messageAuthor message) <> ": " <> D.messageText message
 
-showEventText :: Calendar.Event -> IO T.Text
-showEventText event = 
-  let startTime = (event^.(Calendar.eStart) >>= (^. Calendar.edtDateTime))
-  in
-  case startTime of
-    Just start -> do
-      zone <- Time.getTimeZone start
-      let zonedTime = Time.utcToZonedTime zone start
-          name = Maybe.fromMaybe "" $  event^.Calendar.eSummary
-          time = Time.formatTime Time.defaultTimeLocale "%a %d/%m %R" zonedTime
-       in
-        return $ T.unwords [ "-", name, T.pack time]
-    Nothing ->
-      return $ ""
+showEventText :: ClubEvent -> IO T.Text
+showEventText event = do
+  let startTime = clubEventStart event
+      name = clubEventName event
+  return $ T.unwords [ "-", T.pack (show startTime), name, "by", (clubEventClub event)]
 
-sendEmbed :: D.ChannelId -> Calendar.Events -> D.DiscordHandler ()
+
+eventUTCTime :: ClubEventTime ->  Time.UTCTime
+eventUTCTime time = 
+    case time of
+      ClubEventTimeDate date zone ->
+        Time.zonedTimeToUTC (Time.ZonedTime (Time.LocalTime date Time.midnight) zone)
+      ClubEventTimeDateTime zonedTime ->
+        Time.zonedTimeToUTC zonedTime
+        
+  
+
+
+sendEmbed :: D.ChannelId -> [ClubEvent] -> D.DiscordHandler ()
 sendEmbed channel events = do
-    eventNames <- liftIO $ mapM showEventText (events^.Calendar.eveItems)
+    zone <- liftIO Time.getCurrentTimeZone
+    eventNames <- liftIO $ mapM showEventText (List.sortOn (eventUTCTime . clubEventStart) events)
     let embed = D.CreateEmbed 
                 { D.createEmbedAuthorName = ""
                 , D.createEmbedAuthorUrl = ""
                 , D.createEmbedAuthorIcon = Nothing
-                , D.createEmbedTitle = "Programming Club Events"
+                , D.createEmbedTitle = "Upcoming Club Events"
                 , D.createEmbedUrl = ""
                 , D.createEmbedThumbnail = Nothing
                 , D.createEmbedDescription = T.unlines eventNames
@@ -110,24 +119,120 @@ sendEmbed channel events = do
                 }
     void $ D.restCall (R.CreateMessageEmbed channel "Here are our upcoming events:" embed)
 
-printNewEvents :: IO Calendar.Events
-printNewEvents = do 
+data SavedCalendar = SavedCalendar 
+                     { savedCalandarTitle :: T.Text
+                     , savedCalandarId :: T.Text
+                     }
+
+savedCalendars :: [SavedCalendar]
+savedCalendars = 
+  [ SavedCalendar "The Programming Club" "cp40h0ol4t449m0tq0nmhtjnss@group.calendar.google.com"
+  , SavedCalendar "CSIT Society" "723mf4l2iplkucoatmgi2ps8fs@group.calendar.google.com"
+  , SavedCalendar "RISC" "rmitinfosecollective@gmail.com"
+  ]
+ 
+data ClubEvent = ClubEvent
+                 { clubEventClub :: T.Text
+                 , clubEventName :: T.Text
+                 , clubEventStart :: ClubEventTime
+                 }
+              deriving (Show)
+data ClubEventTime = ClubEventTimeDateTime Time.ZonedTime 
+                  | ClubEventTimeDate Time.Day Time.TimeZone
+
+instance Show ClubEventTime where
+  show (ClubEventTimeDateTime time) = Time.formatTime Time.defaultTimeLocale "%a %d/%m %R" time
+  show (ClubEventTimeDate date zone) = Time.formatTime Time.defaultTimeLocale "%a %d/%m" date
+
+fetchNewEvents :: IO [ClubEvent]
+fetchNewEvents = do 
   let email = Base64URL.encode $ "samnolan555@gmail.com"
-  putStrLn "Getting new events"
   lgr <- Google.newLogger Google.Debug stdout
-  putStrLn "Getting manager"
   mgr <- newManager tlsManagerSettings
-  putStrLn "Getting credentials"
   crd <- Google.getApplicationDefault mgr
-  putStrLn "Getting env"
   env <-
     Google.newEnvWith crd lgr mgr <&> (Google.envScopes .~ Calendar.calendarScope)
-  putStrLn "Send request"
   now <- Time.getCurrentTime
-  r <-
-    runResourceT . Google.runGoogle env . Google.send $
-    (Calendar.eventsList "cp40h0ol4t449m0tq0nmhtjnss@group.calendar.google.com" & Calendar.elTimeMin .~ (Just now))
-  return $ r
+  events <- concat <$> forM savedCalendars (\(SavedCalendar clubName calendarId) -> do
+    r <-
+      runResourceT . Google.runGoogle env . Google.send $
+      (Calendar.eventsList calendarId & Calendar.elTimeMin .~ (Just now))
+    concat <$> mapM  (expandEvent clubName now  (Time.addUTCTime (Time.nominalDay * 21) now)) (r^.Calendar.eveItems)
+    )
+  return events
+
+toClubEventTime :: Calendar.EventDateTime -> IO ClubEventTime 
+toClubEventTime dateTime = 
+  case dateTime ^. Calendar.edtDateTime of
+    Just time ->
+        ClubEventTimeDateTime .  flip Time.utcToZonedTime time <$> Time.getTimeZone time
+    Nothing -> 
+      case dateTime ^. Calendar.edtDate of
+        Just date ->
+           ClubEventTimeDate date <$> Time.getCurrentTimeZone 
+        Nothing ->
+          fail "Could not parse date"
+          
+        
+rruleDayToDayOfWeek :: RRule.Day -> Time.DayOfWeek
+rruleDayToDayOfWeek RRule.Monday = Time.Monday
+rruleDayToDayOfWeek RRule.Tuesday = Time.Tuesday
+rruleDayToDayOfWeek RRule.Wednesday = Time.Wednesday
+rruleDayToDayOfWeek RRule.Thursday = Time.Thursday
+rruleDayToDayOfWeek RRule.Friday = Time.Friday
+rruleDayToDayOfWeek RRule.Saturday = Time.Saturday
+rruleDayToDayOfWeek RRule.Sunday = Time.Sunday
+
+dayOfWeekDiff :: Time.DayOfWeek -> Time.DayOfWeek -> Int
+dayOfWeekDiff a b = mod (fromEnum a - fromEnum b) 7
+
+-- | The first day-of-week on or after some day
+firstDayOfWeekOnAfter :: Time.DayOfWeek -> Time.Day -> Time.Day
+firstDayOfWeekOnAfter dw d = Time.addDays (toInteger $ dayOfWeekDiff dw $ Time.dayOfWeek d) d
+
+expandEvent :: T.Text -> Time.UTCTime -> Time.UTCTime -> Calendar.Event -> IO [ClubEvent]
+expandEvent clubName start end event = do
+  let recurrence =  event ^. Calendar.eRecurrence
+  case event ^. Calendar.eStart of
+    Just st -> do
+      startTime <- toClubEventTime st
+      zone <- Time.getTimeZone start
+      return $ Maybe.fromMaybe [] $ do
+        title <- event ^. Calendar.eSummary
+        case event ^. Calendar.eRecurrence of
+          [] ->
+            return $ [ClubEvent clubName title startTime]
+          recurrence : _ -> do
+            rule <- RRule.fromText recurrence
+            byDay <- RRule.byDay rule
+            frequency <- RRule.frequency rule
+            let (Time.ZonedTime (Time.LocalTime startDate _) _) = Time.utcToZonedTime zone start
+            return  . concat $ map (\(_, day) -> 
+              let dayOfWeek = rruleDayToDayOfWeek day
+                  startingWeekDate = firstDayOfWeekOnAfter dayOfWeek startDate
+              in
+                case frequency of
+                  RRule.Weekly -> 
+                    case startTime of
+                      ClubEventTimeDate date zone -> 
+                        let possibleDays = map (flip ClubEventTimeDate zone . flip Time.addDays startingWeekDate) [0,7..]
+                            boundedDays = takeWhile ((< end) . eventUTCTime) possibleDays
+                        in
+                          map (\time -> ClubEvent clubName title time) boundedDays
+                      ClubEventTimeDateTime zonedTime -> 
+                        let (Time.ZonedTime (Time.LocalTime date timeOfDay) zone) = zonedTime
+                            possibleTimes = map ((\posDate -> (ClubEventTimeDateTime (Time.ZonedTime (Time.LocalTime posDate timeOfDay) zone) )). flip Time.addDays startingWeekDate) [0,7..]
+                            boundedDays = takeWhile ((< end) . eventUTCTime) possibleTimes
+                        in
+                          map (\time -> ClubEvent clubName title time) boundedDays
+
+                  _ -> 
+                    return $ ClubEvent clubName title startTime
+                ) (NonEmpty.toList byDay)
+
+    Nothing ->
+      return []
+  
 
 helpMessage :: T.Text
 helpMessage = "Hello! I'm an events bot. You can see upcoming events with !events"

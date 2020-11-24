@@ -5,6 +5,7 @@ let
       haskellPackages = pkgs.haskellPackages.override {
         overrides = haskellPackagesNew: haskellPackagesOld: rec {
           discord-haskell = haskellPackagesNew.callPackage ./nix/discord-haskell.nix {};
+          rrule = haskellPackagesNew.callPackage ./nix/rrule.nix {};
 
           events-bot =
             haskellPackagesNew.callPackage ./events-bot.nix { };
