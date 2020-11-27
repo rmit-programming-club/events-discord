@@ -3,7 +3,6 @@ module Lib
     ( runBot
     ) where
 
-import           Data.Text                      ( append )
 import qualified Data.Text.IO                  as TIO
 import qualified Data.Text                     as T
 import           Control.Lens                   ( (.~)
@@ -14,38 +13,20 @@ import           Control.Lens                   ( (.~)
 import qualified Discord                       as D
 import qualified Discord.Types                 as D
 import qualified Discord.Requests              as R
-import           Data.IORef                     ( newIORef
-                                                , readIORef
-                                                , writeIORef
-                                                , IORef
-                                                )
-import           Control.Concurrent             ( forkIO )
 import           Control.Monad                  ( void
                                                 , when
-                                                , mapM
                                                 , forM
                                                 )
 import           System.Environment             ( lookupEnv )
-import qualified Control.Monad.Reader          as Reader
 import           Control.Monad.Trans            ( liftIO )
-import           Network.Google.AppsCalendar    ( AppsCalendarAPI )
-import qualified Servant
-import qualified Servant                       as Servant
-import qualified Servant.Client                as Servant
-import qualified Network.HTTP.Client           as HTTP
-import qualified System.Environment            as Environment
 import           Control.Monad.Trans.Resource   ( runResourceT )
 import qualified Network.Google                as Google
-import qualified Data.ByteString               as BS
-import qualified Data.ByteString.Base64.URL    as Base64URL
 import qualified Network.Google.AppsCalendar   as Calendar
 import           Network.HTTP.Client            ( newManager )
 import           Network.HTTP.Client.TLS        ( tlsManagerSettings )
 import           System.IO                      ( stdout )
 import qualified Data.Maybe                    as Maybe
 import qualified Data.Time                     as Time
-import qualified Data.Time.Calendar            as Time
-import qualified Data.Time.Format              as Time
 import qualified Data.List                     as List
 import qualified Data.Time.RRule               as RRule
 import qualified Data.List.NonEmpty            as NonEmpty
@@ -63,24 +44,21 @@ runBot = do
         }
       TIO.putStrLn userFacingError
 
+
 eventHandler :: D.Event -> D.DiscordHandler ()
-eventHandler event =  Reader.ask >>= \_ ->
+eventHandler event =
   case event of
   D.MessageCreate m -> 
       when (not $ D.userIsBot (D.messageAuthor m) ) $
-        case (D.messageText m) of
+        case D.messageText m of
           "!help" -> do
             void $ D.restCall (R.CreateMessage (D.messageChannel m) helpMessage)
           "!events" -> do
             events <- liftIO fetchNewEvents
             sendEmbed (D.messageChannel m) events
           _ -> pure ()
-
         
   _ -> pure ()
- where
-  printMessage :: D.Message -> String
-  printMessage message = T.unpack $ D.userName (D.messageAuthor message) <> ": " <> D.messageText message
 
 showEventText :: ClubEvent -> IO T.Text
 showEventText event = do
@@ -102,7 +80,6 @@ eventUTCTime time =
 
 sendEmbed :: D.ChannelId -> [ClubEvent] -> D.DiscordHandler ()
 sendEmbed channel events = do
-    zone <- liftIO Time.getCurrentTimeZone
     eventNames <- liftIO $ mapM showEventText (List.sortOn (eventUTCTime . clubEventStart) events)
     let embed = D.CreateEmbed 
                 { D.createEmbedAuthorName = ""
@@ -117,11 +94,12 @@ sendEmbed channel events = do
                 , D.createEmbedFooterText = ""
                 , D.createEmbedFooterIcon = Nothing
                 }
-    void $ D.restCall (R.CreateMessageEmbed channel "Here are our upcoming events:" embed)
+    _ <- D.restCall (R.CreateMessageEmbed channel "Here are our upcoming events:" embed) 
+    pure ()
 
 data SavedCalendar = SavedCalendar 
-                     { savedCalandarTitle :: T.Text
-                     , savedCalandarId :: T.Text
+                     { _savedCalandarTitle :: T.Text
+                     , _savedCalandarId :: T.Text
                      }
 
 savedCalendars :: [SavedCalendar]
@@ -137,16 +115,16 @@ data ClubEvent = ClubEvent
                  , clubEventStart :: ClubEventTime
                  }
               deriving (Show)
+
 data ClubEventTime = ClubEventTimeDateTime Time.ZonedTime 
                   | ClubEventTimeDate Time.Day Time.TimeZone
 
 instance Show ClubEventTime where
   show (ClubEventTimeDateTime time) = Time.formatTime Time.defaultTimeLocale "%a %d/%m %R" time
-  show (ClubEventTimeDate date zone) = Time.formatTime Time.defaultTimeLocale "%a %d/%m" date
+  show (ClubEventTimeDate date _) = Time.formatTime Time.defaultTimeLocale "%a %d/%m" date
 
 fetchNewEvents :: IO [ClubEvent]
 fetchNewEvents = do 
-  let email = Base64URL.encode $ "samnolan555@gmail.com"
   lgr <- Google.newLogger Google.Debug stdout
   mgr <- newManager tlsManagerSettings
   crd <- Google.getApplicationDefault mgr
@@ -157,9 +135,9 @@ fetchNewEvents = do
     r <-
       runResourceT . Google.runGoogle env . Google.send $
       (Calendar.eventsList calendarId & Calendar.elTimeMin .~ (Just now))
-    concat <$> mapM  (expandEvent clubName now  (Time.addUTCTime (Time.nominalDay * 21) now)) (r^.Calendar.eveItems)
+    concat <$> mapM  (expandEvent clubName now (Time.addUTCTime (Time.nominalDay * 7) now)) (r^.Calendar.eveItems)
     )
-  return events
+  pure events
 
 toClubEventTime :: Calendar.EventDateTime -> IO ClubEventTime 
 toClubEventTime dateTime = 
@@ -192,7 +170,6 @@ firstDayOfWeekOnAfter dw d = Time.addDays (toInteger $ dayOfWeekDiff dw $ Time.d
 
 expandEvent :: T.Text -> Time.UTCTime -> Time.UTCTime -> Calendar.Event -> IO [ClubEvent]
 expandEvent clubName start end event = do
-  let recurrence =  event ^. Calendar.eRecurrence
   case event ^. Calendar.eStart of
     Just st -> do
       startTime <- toClubEventTime st
@@ -214,13 +191,13 @@ expandEvent clubName start end event = do
                 case frequency of
                   RRule.Weekly -> 
                     case startTime of
-                      ClubEventTimeDate date zone -> 
+                      ClubEventTimeDate _ _ -> 
                         let possibleDays = map (flip ClubEventTimeDate zone . flip Time.addDays startingWeekDate) [0,7..]
                             boundedDays = takeWhile ((< end) . eventUTCTime) possibleDays
                         in
                           map (\time -> ClubEvent clubName title time) boundedDays
                       ClubEventTimeDateTime zonedTime -> 
-                        let (Time.ZonedTime (Time.LocalTime date timeOfDay) zone) = zonedTime
+                        let (Time.ZonedTime (Time.LocalTime _ timeOfDay) _) = zonedTime
                             possibleTimes = map ((\posDate -> (ClubEventTimeDateTime (Time.ZonedTime (Time.LocalTime posDate timeOfDay) zone) )). flip Time.addDays startingWeekDate) [0,7..]
                             boundedDays = takeWhile ((< end) . eventUTCTime) possibleTimes
                         in

@@ -52,6 +52,9 @@ executables:
     dependencies:
     - events-bot
 
+ghc-options:
+  - -Wall
+
 tests:
   events-bot-test:
     main:                Spec.hs
