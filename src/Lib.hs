@@ -60,23 +60,23 @@ eventHandler event =
             sendEmbed (D.messageChannel m) events
           "!events tpc" -> do
             _ <- D.restCall (R.TriggerTypingIndicator (D.messageChannel m)) 
-            events <- liftIO fetchClubEvents "The Programming Club"
+            events <- liftIO $ fetchClubEvents "The Programming Club"
             sendEmbed (D.messageChannel m) events
           "!events the programming club" -> do
             _ <- D.restCall (R.TriggerTypingIndicator (D.messageChannel m)) 
-            events <- liftIO fetchClubEvents "The Programming Club"
+            events <- liftIO $ fetchClubEvents "The Programming Club"
             sendEmbed (D.messageChannel m) events
           "!events csit" -> do
             _ <- D.restCall (R.TriggerTypingIndicator (D.messageChannel m)) 
-            events <- liftIO fetchClubEvents "CSIT Society"
+            events <- liftIO $ fetchClubEvents "CSIT Society"
             sendEmbed (D.messageChannel m) events
           "!events csit society" -> do
             _ <- D.restCall (R.TriggerTypingIndicator (D.messageChannel m)) 
-            events <- liftIO fetchClubEvents "CSIT Society"
+            events <- liftIO $ fetchClubEvents "CSIT Society"
             sendEmbed (D.messageChannel m) events
           "!events risc" -> do
             _ <- D.restCall (R.TriggerTypingIndicator (D.messageChannel m)) 
-            events <- liftIO fetchClubEvents "RISC"
+            events <- liftIO $ fetchClubEvents "RISC"
             sendEmbed (D.messageChannel m) events
           _ -> pure ()
         
@@ -146,7 +146,7 @@ sendEmbed channel events = do
     pure ()
 
 data SavedCalendar = SavedCalendar 
-                     { _savedCalandarTitle :: T.Text , _savedCalandarId :: T.Text
+                     { savedCalendarTitle :: T.Text , _savedCalendarId :: T.Text
                      }
 
 savedCalendars :: [SavedCalendar]
@@ -190,8 +190,8 @@ fetchNewEvents = do
     )
   pure events
 
-fetchClubEvent :: T.Text -> IO [ClubEvent]
-fetchClubEvent club = do
+fetchClubEvents :: T.Text -> IO [ClubEvent]
+fetchClubEvents club = do
   let filteredCalendars = filter ((==club) . savedCalendarTitle) savedCalendars
   lgr <- Google.newLogger Google.Debug stdout
   mgr <- newManager tlsManagerSettings
@@ -199,11 +199,11 @@ fetchClubEvent club = do
   env <-
     Google.newEnvWith crd lgr mgr <&> (Google.envScopes .~ Calendar.calendarScope)
   now <- Time.getCurrentTime
-  events <- forM filteredCalendars (\(SavedCalendar clubName calendarId) -> do
+  events <- concat <$> forM filteredCalendars (\(SavedCalendar clubName calendarId) -> do
     r <-
       runResourceT . Google.runGoogle env . Google.send $
       (Calendar.eventsList calendarId & Calendar.elTimeMin .~ (Just now))
-    concat <$> mapM  (expandEvent clubName now  (Time.addUTCTime (Time.nominalDay * 21) now)) (r^.Calendar.eveItems)
+    concat <$> mapM  (expandEvent clubName now  (Time.addUTCTime (Time.nominalDay * 14) now)) (r^.Calendar.eveItems)
     )
   return events
 
