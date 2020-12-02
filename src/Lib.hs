@@ -62,11 +62,14 @@ eventHandler event =
         
   _ -> pure ()
 
-showEventText :: ClubEvent -> IO T.Text
+
+showEventText :: ClubEvent -> T.Text
 showEventText event = do
   let startTime = clubEventStart event
       name = clubEventName event
-  return $ T.unwords [ "-", T.pack (show startTime), name, "by", (clubEventClub event)]
+  case startTime of
+    ClubEventTimeDate _ _ -> T.intercalate " - "[ name, clubEventClub event]
+    ClubEventTimeDateTime zonedTime -> T.intercalate " - " [T.pack $ Time.formatTime Time.defaultTimeLocale "__%I:%M %P__" zonedTime, name, clubEventClub event]
 
 
 eventUTCTime :: ClubEventTime ->  Time.UTCTime
@@ -82,7 +85,17 @@ eventUTCTime time =
 
 sendEmbed :: D.ChannelId -> [ClubEvent] -> D.DiscordHandler ()
 sendEmbed channel events = do
-    eventNames <- liftIO $ mapM showEventText (List.sortOn (eventUTCTime . clubEventStart) events)
+    let sortedEvents = List.sortOn (eventUTCTime . clubEventStart) events
+        categories = map (\event -> (clubEventTimeDay (clubEventStart event), event)) sortedEvents
+        grouped = List.groupBy (\a b -> fst a == fst b) categories
+        description = 
+          map (\category -> 
+            let date = fst $ head category
+            in
+            T.unlines ((T.pack $ Time.formatTime Time.defaultTimeLocale "**%A** - %d/%m" date
+                      ) : (map (showEventText . snd) category)
+                      ))
+          grouped
     let embed = D.CreateEmbed 
                 { D.createEmbedAuthorName = ""
                 , D.createEmbedAuthorUrl = ""
@@ -91,7 +104,7 @@ sendEmbed channel events = do
                 , D.createEmbedUrl = ""
                 , D.createEmbedThumbnail = Nothing
                 , D.createEmbedDescription = 
-                    T.concat [ T.unlines eventNames
+                    T.concat [ T.unlines description 
                              , "\n Subscribe to: \n"
                              , T.intercalate " | " (map (\(SavedCalendar name url) -> 
                                  T.concat 
@@ -113,8 +126,7 @@ sendEmbed channel events = do
     pure ()
 
 data SavedCalendar = SavedCalendar 
-                     { _savedCalandarTitle :: T.Text
-                     , _savedCalandarId :: T.Text
+                     { _savedCalandarTitle :: T.Text , _savedCalandarId :: T.Text
                      }
 
 savedCalendars :: [SavedCalendar]
@@ -133,6 +145,10 @@ data ClubEvent = ClubEvent
 
 data ClubEventTime = ClubEventTimeDateTime Time.ZonedTime 
                   | ClubEventTimeDate Time.Day Time.TimeZone
+
+clubEventTimeDay :: ClubEventTime -> Time.Day
+clubEventTimeDay (ClubEventTimeDate day _) = day
+clubEventTimeDay (ClubEventTimeDateTime (Time.ZonedTime (Time.LocalTime day _) _)) = day
 
 instance Show ClubEventTime where
   show (ClubEventTimeDateTime time) = Time.formatTime Time.defaultTimeLocale "%a %d/%m %R" time
