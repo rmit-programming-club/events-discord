@@ -37,6 +37,7 @@ dependencies:
 - lens
 - time
 - rrule
+- uri-encode
 
 library:
   source-dirs: src

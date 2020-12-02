@@ -30,6 +30,7 @@ import qualified Data.Time                     as Time
 import qualified Data.List                     as List
 import qualified Data.Time.RRule               as RRule
 import qualified Data.List.NonEmpty            as NonEmpty
+import qualified Network.URI.Encode            as URIEncode
 
 runBot :: IO ()
 runBot = do
@@ -54,6 +55,7 @@ eventHandler event =
           "!help" -> do
             void $ D.restCall (R.CreateMessage (D.messageChannel m) helpMessage)
           "!events" -> do
+            _ <- D.restCall (R.TriggerTypingIndicator (D.messageChannel m)) 
             events <- liftIO fetchNewEvents
             sendEmbed (D.messageChannel m) events
           _ -> pure ()
@@ -88,7 +90,20 @@ sendEmbed channel events = do
                 , D.createEmbedTitle = "Upcoming Club Events"
                 , D.createEmbedUrl = ""
                 , D.createEmbedThumbnail = Nothing
-                , D.createEmbedDescription = T.unlines eventNames
+                , D.createEmbedDescription = 
+                    T.concat [ T.unlines eventNames
+                             , "\n Subscribe to: \n"
+                             , T.intercalate " | " (map (\(SavedCalendar name url) -> 
+                                 T.concat 
+                                 [ "["
+                                 , name
+                                 , "]("
+                                 , "https://calendar.google.com/calendar/ical/"
+                                 , URIEncode.encodeText url
+                                 , "/public/basic.ics"
+                                 , ")"
+                                 ]) savedCalendars)
+                              ]
                 , D.createEmbedFields = []
                 , D.createEmbedImage = Nothing
                 , D.createEmbedFooterText = ""
