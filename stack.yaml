@@ -39,7 +39,14 @@ packages:
 # - git: https://github.com/commercialhaskell/stack.git
 #   commit: e7b331f14bcffb8367cd58fbfc8b40ec7642100a
 #
-# extra-deps: []
+extra-deps:
+- discord-haskell-1.8.1@sha256:86d8777ce02ed404c81d02c7b9b0fd5f870e52c6e3a07d98ce3681a7873f7e0e,3562
+- gogol-0.5.0@sha256:01b38acf97ae0afb2465935fee1bebce03c1b84e629cf0887467be7ae361f0a7,3222
+- gogol-apps-calendar-0.5.0@sha256:7c02f3b58e832037f0ef5efd6ecf62529e0628699d1661cdf1bce0a7c879a234,3550
+- rrule-0.1.1@sha256:0ae1c1065364c818524d1f0f0bfcd3689b349d1a4abd0c43f024ca7396a2852b,1560
+- emoji-0.1.0.2@sha256:d995572a5c7dcd28f98eb15c6e387a7b3bda1ac2477ab0d9dba8580d5d7b161f,1273
+- gogol-core-0.5.0@sha256:c0a919cd89a33de7fd6ee925abdb48b0eb5d1002a016124acbdff568f267e4c7,2821
+
 
 # Override default flag values for local packages and extra-deps
 # flags: {}
