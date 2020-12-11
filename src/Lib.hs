@@ -78,7 +78,6 @@ eventHandler event =
             _ <- D.restCall (R.TriggerTypingIndicator (D.messageChannel m)) 
             events <- liftIO $ fetchClubEvents "RISC"
             sendEmbed (D.messageChannel m) events
-          _ -> pure ()
           "!events switch" -> do
             _ <- D.restCall (R.TriggerTypingIndicator (D.messageChannel m)) 
             events <- liftIO $ fetchClubEvents "SWITCH"
@@ -160,6 +159,7 @@ savedCalendars =
   , SavedCalendar "CSIT Society" "723mf4l2iplkucoatmgi2ps8fs@group.calendar.google.com"
   , SavedCalendar "RISC" "rmitinfosecollective@gmail.com"
   , SavedCalendar "SWITCH" "585nsnjee5jnj0o8bn42ctrvdo@group.calendar.google.com"
+  , SavedCalendar "DSC" "l5o9br0r398sd8lkokiul7h2so@group.calendar.google.com"
   ]
  
 data ClubEvent = ClubEvent
